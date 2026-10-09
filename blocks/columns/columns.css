@@ -1,6 +1,7 @@
 .columns {
   --columns-gap: 0;
-  /*--columns-gap: 40px;*/
+
+  /* --columns-gap: 40px; */
 
   display: grid;
   gap: var(--columns-gap);
