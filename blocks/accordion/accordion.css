@@ -45,6 +45,7 @@
   transform: translateY(-25%) rotate(-45deg);    /* points up when open */
 }
 
+/* body text slightly muted so titles lead */
 .accordion .accordion-item-body {
   padding: 0 16px 16px;
   color: light-dark(var(--color-gray-700, #444), var(--color-gray-300));
