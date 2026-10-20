@@ -42,8 +42,10 @@ const decorateArea = ({ area = document }) => {
   eagerLoad(area, 'img');
 };
 
+const eventActionUrl = 'https://18501-ronnyeventbuilder-stage.adobeio-static.net/api/v1/web/event-appbuilder/get-event';
+
 export async function loadPage() {
-  setConfig({ hostnames, locales, linkBlocks, components, decorateArea });
+  setConfig({ hostnames, locales, linkBlocks, components, decorateArea, eventActionUrl });
   await loadArea();
 }
 await loadPage();
