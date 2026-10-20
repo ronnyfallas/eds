@@ -12,7 +12,7 @@
 
 // Cached CDN host (adobeio-STATIC) — fast, honours the action's Cache-Control.
 // Use adobeioruntime.net only when debugging (always executes, always logs).
-const ACTION_URL = 'https://18501-ronnyeventbuilder-stage.adobeio-static.net/api/v1/web/event-appbuilder/get-event';
+import { getConfig } from '../../scripts/ak.js';
 
 function fmtDate(iso) {
   try {
@@ -47,6 +47,7 @@ function render(el, data) {
 }
 
 export default async function init(el) {
+  const { eventActionUrl } = getConfig();
   // 1) Read the authored event ID (must match a sheet row id), then clear.
   // Authoring is a key/value row:  | id | <event-id> |
   // Read the LAST NON-EMPTY cell's text (the value), so a trailing empty cell is ignored.
@@ -62,7 +63,7 @@ export default async function init(el) {
 
   // 3) Fetch from the action.
   try {
-    const res = await fetch(`${ACTION_URL}?eventId=${encodeURIComponent(eventId)}`);
+    const res = await fetch(`${eventActionUrl}?eventId=${encodeURIComponent(eventId)}`);
     if (!res.ok) throw new Error(`Action returned ${res.status}`); // e.g. 404 = id not in sheet / row invalid
     const data = await res.json();
     render(el, data);
