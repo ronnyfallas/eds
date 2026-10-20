@@ -48,7 +48,13 @@ function render(el, data) {
 
 export default async function init(el) {
   // 1) Read the authored event ID (must match a sheet row id), then clear.
-  const eventId = el.textContent.trim() || 'houston-2026';
+  // Authoring is a key/value row:  | id | <event-id> |
+  // Read the LAST NON-EMPTY cell's text (the value), so a trailing empty cell is ignored.
+  const cells = [...el.querySelectorAll(':scope > div > div')]
+    .map((c) => c.textContent.replace(/\s+/g, '').trim())
+    .filter(Boolean);
+  const eventId = cells[cells.length - 1] || 'houston-2026';
+
   el.textContent = '';
 
   // 2) Loading state — never show an empty box.
