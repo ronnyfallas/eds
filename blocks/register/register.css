@@ -1,10 +1,127 @@
 .register {
-  .register-button {
+  button {
     line-height: 1;
     font-weight: 500;
+    padding: var(--spacing-s) var(--spacing-m);
+    border: 2px solid var(--color-text);
+  }
+
+  .register-button,
+  .register-submit {
     color: var(--color-background);
     background-color: var(--color-text);
-    border: 2px solid var(--color-text);
-    padding: var(--spacing-s) var(--spacing-m);
+
+    &:disabled {
+      opacity: 0.6;
+      cursor: progress;
+    }
+  }
+
+  .register-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--spacing-m);
+  }
+
+  .register-user {
+    margin: 0;
+  }
+
+  .register-message,
+  .register-status,
+  .register-unavailable,
+  .register-field-error {
+    margin: 0;
+
+    &:empty {
+      display: none;
+    }
+  }
+
+  .register-field-error,
+  .register-message {
+    color: light-dark(var(--color-red-700), var(--color-red-300));
+  }
+
+  .register-dialog {
+    box-sizing: border-box;
+    width: min(32rem, 100% - 2 * var(--spacing-l));
+    padding: var(--spacing-l);
+    border: none;
+    color: var(--color-text);
+    background-color: var(--color-background);
+
+    &::backdrop {
+      background-color: rgb(var(--color-dark-base) / 60%);
+    }
+  }
+
+  .register-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--spacing-m);
+
+    h2 {
+      margin: 0;
+      font-size: var(--heading-font-size-m);
+    }
+  }
+
+  .register-close {
+    color: var(--color-text);
+    background: transparent;
+    border-color: transparent;
+    font-size: var(--body-font-size-xl);
+  }
+
+  [role="tablist"] {
+    display: flex;
+    gap: var(--spacing-xs);
+    margin-block: var(--spacing-l);
+    border-block-end: 2px solid var(--color-gray-200);
+
+    button {
+      color: var(--color-text);
+      background: transparent;
+      border-color: transparent;
+      border-block-end-color: transparent;
+      margin-block-end: -2px;
+    }
+
+    [aria-selected="true"] {
+      border-block-end-color: var(--color-text);
+    }
+  }
+
+  form {
+    display: grid;
+    gap: var(--spacing-m);
+  }
+
+  .register-field {
+    display: grid;
+    gap: var(--spacing-xs);
+
+    &[hidden] {
+      display: none;
+    }
+
+    input,
+    select {
+      padding: var(--spacing-s);
+      border: 1px solid var(--color-gray-500);
+      background-color: var(--color-background);
+      color: var(--color-text);
+    }
+
+    [aria-invalid="true"] {
+      border-color: light-dark(var(--color-red-700), var(--color-red-300));
+    }
+  }
+
+  .register-submit {
+    justify-self: start;
   }
 }
