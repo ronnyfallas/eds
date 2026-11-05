@@ -1,0 +1,38 @@
+/*
+ * First section is the hero. A section styled `aside` becomes the sticky
+ * second column; every other section fills the main column.
+ */
+@media (width >= 900px) {
+  .event-template main:has(> .aside) {
+    display: grid;
+    grid-template-columns:
+      [full-start] 1fr
+      [main-start] calc(var(--grid-column-width) * 8 - var(--spacing-xxl))
+      [main-end] var(--spacing-xxl)
+      [aside-start] calc(var(--grid-column-width) * 4)
+      [aside-end] 1fr
+      [full-end];
+
+    > .section:not(:first-child) {
+      --grid-container-width: 100%;
+
+      grid-column: main;
+      min-width: 0;
+    }
+
+    > .section:first-child {
+      grid-column: full;
+    }
+
+    /* Spans every row the main column can use; no row-gap, so unused rows collapse */
+    > .section.aside {
+      grid-column: aside;
+      grid-row: 2 / span 99;
+      align-self: start;
+      position: sticky;
+      top: calc(var(--header-height) + var(--spacing-l));
+      max-height: calc(100dvh - var(--header-height) - var(--spacing-l) * 2);
+      overflow-y: auto;
+    }
+  }
+}
