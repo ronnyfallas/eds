@@ -1,0 +1,10 @@
+.register {
+  .register-button {
+    line-height: 1;
+    font-weight: 500;
+    color: var(--color-background);
+    background-color: var(--color-text);
+    border: 2px solid var(--color-text);
+    padding: var(--spacing-s) var(--spacing-m);
+  }
+}
