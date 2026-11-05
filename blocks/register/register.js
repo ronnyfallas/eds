@@ -4,7 +4,7 @@ const COUNTRIES = [['DE', 'Germany'], ['US', 'United States'], ['CR', 'Costa Ric
 
 const MESSAGES = {
   401: 'Your session or code is no longer valid. Please try again.',
-  409: 'This email is already registered.',
+  409: 'We could not complete this request. If you have registered before, log in instead.',
   429: 'Too many attempts. Please wait a moment and try again.',
   fields: 'Please correct the highlighted fields.',
   registered: 'You are registered.',
