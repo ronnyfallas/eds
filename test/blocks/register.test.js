@@ -124,9 +124,14 @@ const REGISTRATION = {
 };
 
 // Fills the Register form, waits for consent, ticks the given boxes and submits.
+// Polls instead of a fixed wait; the dialog chains several requests.
+async function until(ready, ms = 1000) {
+  for (let waited = 0; !ready() && waited < ms; waited += 10) { await settle(10); }
+}
+
 async function register(form, values = REGISTRATION, accepted = ['terms']) {
   fill(form, values);
-  await settle();
+  await until(() => accepted.every((id) => form.elements.namedItem(id)));
   accepted.forEach((id) => { form.elements.namedItem(id).checked = true; });
   form.requestSubmit();
   await settle();
@@ -138,7 +143,14 @@ async function click(el, text) {
   return el.querySelector('dialog');
 }
 
-const open = (el) => click(el, 'Register');
+// Opens the dialog and waits until it shows its content or the unavailable message.
+async function open(el, text = 'Register') {
+  const dialog = await click(el, text);
+  await until(() => dialog.querySelector('.register-content').children.length
+    || dialog.querySelector('.register-unavailable').textContent);
+  await settle();
+  return dialog;
+}
 const buttons = (el) => [...el.querySelectorAll('.register-controls button')].map((b) => b.textContent);
 const onChange = (e) => events.push(e.detail);
 
@@ -341,7 +353,7 @@ describe('register: fields from the backend', () => {
   it('prefills editable fields from session.profile[prefill]', async () => {
     mockFetch({ 'GET /api/session': { body: { ...SSO_NEW, readOnly: [] } } });
     const el = await mount();
-    const dialog = await click(el, 'Complete registration');
+    const dialog = await open(el, 'Complete registration');
     const form = dialog.querySelector('form');
     const firstName = form.elements.namedItem('firstName');
     expect(firstName.value).to.equal('Ana');
@@ -355,7 +367,7 @@ describe('register: fields from the backend', () => {
       'POST /api/register': { status: 201 },
     });
     const el = await mount();
-    const dialog = await click(el, 'Complete registration');
+    const dialog = await open(el, 'Complete registration');
     const form = dialog.querySelector('form');
     const email = form.elements.namedItem('email');
     const country = form.elements.namedItem('country');
@@ -381,7 +393,7 @@ describe('register: complete registration', () => {
       'POST /api/register': { status: 201 },
     });
     const el = await mount({ registrationMode: 'sso' });
-    const dialog = await click(el, 'Complete registration');
+    const dialog = await open(el, 'Complete registration');
     expect(document.getElementById(dialog.getAttribute('aria-labelledby')).textContent).to.equal('Complete registration');
     expect([...dialog.querySelectorAll('form')].map((f) => f.className)).to.deep.equal(['register-form-register']);
     expect(dialog.querySelector('[role="tablist"], .register-sso')).to.be.null;
@@ -811,7 +823,7 @@ describe('register: event config', () => {
 
   it('shows unavailable for Complete registration when event config fails', async () => {
     mockFetch({ 'GET /api/session': { body: SSO_NEW }, [CONFIG]: { status: 404 } });
-    const dialog = await click(await mount(), 'Complete registration');
+    const dialog = await open(await mount(), 'Complete registration');
     expect(view(dialog)).to.deep.equal({ tabs: [], forms: [], sso: null, unavailable: 'Registration is unavailable right now.' });
   });
 

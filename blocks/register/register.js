@@ -340,6 +340,7 @@ export default function init(el) {
 
   const openDialog = async (complete) => {
     title.textContent = complete ? 'Complete registration' : 'Register or log in';
+    content.replaceChildren();
     content.hidden = true;
     unavailable.textContent = '';
     dialog.showModal();
