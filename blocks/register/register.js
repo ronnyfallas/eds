@@ -192,7 +192,7 @@ export default function init(el) {
 
   const render = () => {
     if (session?.authenticated) {
-      user.textContent = ['Logged in', session.firstName].filter(Boolean).join(' as ');
+      user.textContent = ['Logged in', session.profile?.firstName].filter(Boolean).join(' as ');
       controls.replaceChildren(user, logoutButton);
     } else {
       controls.replaceChildren(openButton);
@@ -201,7 +201,8 @@ export default function init(el) {
 
   const changed = () => {
     render();
-    const { authenticated = false, firstName } = session ?? {};
+    const authenticated = session?.authenticated ?? false;
+    const firstName = session?.profile?.firstName;
     document.dispatchEvent(new CustomEvent('session:changed', { detail: { authenticated, firstName } }));
   };
 

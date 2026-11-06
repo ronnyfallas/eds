@@ -10,8 +10,14 @@ let events = [];
 let htmlWrites = 0;
 let storageWrites = 0;
 
-const ANON = { authenticated: false, csrfToken: 't1' };
-const ANA = { authenticated: true, csrfToken: 't2', firstName: 'Ana' };
+const ANON = { authenticated: false, csrfToken: 't1', mode: 'anonymous', profile: null, registeredEvents: [] };
+const ANA = {
+  authenticated: true,
+  csrfToken: 't2',
+  mode: 'member',
+  profile: { firstName: 'Ana', lastName: 'Mora', email: 'ana@example.com', country: 'CR' },
+  registeredEvents: ['houston-2026'],
+};
 
 // Each route is a queue of responses; the last one repeats.
 function mockFetch(table) {
@@ -317,7 +323,7 @@ describe('register: login tab', () => {
 describe('register: logout', () => {
   it('posts with the current token, refreshes the session and uses the new token', async () => {
     mockFetch({
-      'GET /api/session': [{ body: ANA }, { body: { authenticated: false, csrfToken: 't3' } }],
+      'GET /api/session': [{ body: ANA }, { body: { ...ANON, csrfToken: 't3' } }],
       'POST /api/logout': { status: 204 },
       'POST /api/register': { status: 409 },
     });
