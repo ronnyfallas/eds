@@ -79,7 +79,7 @@
   [role="tablist"] {
     display: flex;
     gap: var(--spacing-xs);
-    margin-block: var(--spacing-l);
+    margin: 0;
     border-block-end: 2px solid var(--color-gray-200);
 
     button {
@@ -123,5 +123,25 @@
 
   .register-submit {
     justify-self: start;
+  }
+
+  .register-content {
+    display: grid;
+    gap: var(--spacing-l);
+    margin-block-start: var(--spacing-l);
+
+    &[hidden] {
+      display: none;
+    }
+  }
+
+  .register-sso {
+    justify-self: start;
+    line-height: 1;
+    font-weight: 500;
+    text-decoration: none;
+    padding: var(--spacing-s) var(--spacing-m);
+    border: 2px solid var(--color-text);
+    color: var(--color-text);
   }
 }
