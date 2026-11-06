@@ -10,35 +10,82 @@ let events = [];
 let htmlWrites = 0;
 let storageWrites = 0;
 
+const PROFILE = { firstName: 'Ana', lastName: 'Mora', email: 'ana@example.com', company: 'Acme', country: 'CR' };
 const ANON = { authenticated: false, csrfToken: 't1', mode: 'anonymous', profile: null, registeredEvents: [] };
 const ANA = {
   authenticated: true,
   csrfToken: 't2',
-  mode: 'member',
-  profile: { firstName: 'Ana', lastName: 'Mora', email: 'ana@example.com', country: 'CR' },
+  mode: 'otp',
+  profile: PROFILE,
   registeredEvents: ['houston-2026'],
 };
+// Logged in through SSO, not yet registered for this event.
+const SSO_NEW = {
+  authenticated: true,
+  csrfToken: 't4',
+  mode: 'sso',
+  profile: PROFILE,
+  readOnly: ['email', 'country'],
+  registeredEvents: ['other-2026'],
+};
+
+const FIELD_DEFS = [
+  { name: 'firstName', type: 'text', label: 'First name', required: true, prefill: 'firstName' },
+  { name: 'lastName', type: 'text', label: 'Last name', required: true },
+  { name: 'email', type: 'email', label: 'Email', required: true },
+  { name: 'company', type: 'text', label: 'Company', required: false },
+  { name: 'phone', type: 'tel', label: 'Phone', required: false },
+  {
+    name: 'country',
+    type: 'select',
+    label: 'Country',
+    required: true,
+    options: [{ value: 'DE', label: 'Germany' }, { value: 'US', label: 'United States' }, { value: 'CR', label: 'Costa Rica' }],
+  },
+];
+const consentFor = (country, extra = {}) => ({
+  body: {
+    country,
+    version: `${country}-v1`,
+    text: `Terms for ${country}.`,
+    checkboxes: [
+      { id: 'terms', label: 'I accept the terms', required: true },
+      { id: 'news', label: 'Send me news', required: false },
+    ],
+    requiredFields: country === 'CR' ? ['company'] : [],
+    ...extra,
+  },
+});
 
 const CONFIG = 'GET /api/event-config?eventId=houston-2026';
-const ALL_MODES = { body: { modes: ['guest', 'otp', 'sso'], registrationMode: 'hybrid' } };
+const FIELDS = 'GET /api/fields?fieldSet=default';
+const CONSENT = (country) => `GET /api/consent?country=${country}`;
+const config = (modes) => ({ body: { modes, registrationMode: 'hybrid', fieldSet: 'default' } });
+const ALL_MODES = config(['guest', 'otp', 'sso']);
 
-// Each route is a queue of responses; the last one repeats. Event config defaults to all modes.
+// Each route is a queue of responses; the last one repeats. Config, fields and consent default.
 function mockFetch(table) {
-  routes = Object.fromEntries(Object.entries({ [CONFIG]: ALL_MODES, ...table })
-    .map(([key, value]) => [key, [].concat(value)]));
+  routes = Object.fromEntries(Object.entries({
+    [CONFIG]: ALL_MODES,
+    [FIELDS]: { body: { fields: FIELD_DEFS } },
+    [CONSENT('CR')]: consentFor('CR'),
+    [CONSENT('DE')]: consentFor('DE'),
+    ...table,
+  }).map(([key, value]) => [key, [].concat(value)]));
 }
+
+const settle = (ms = 20) => new Promise((resolve) => { setTimeout(resolve, ms); });
 
 window.fetch = async (url, opts = {}) => {
   const key = `${opts.method ?? 'GET'} ${url}`;
   calls.push({ key, opts, body: opts.body && JSON.parse(opts.body) });
   const queue = routes[key];
   const next = queue?.length > 1 ? queue.shift() : queue?.[0];
+  if (next?.delay) { await settle(next.delay); }
   if (!next || next === 'network') { throw new TypeError('Failed to fetch'); }
   const body = typeof next.body === 'string' ? next.body : JSON.stringify(next.body ?? {});
   return new Response(next.status === 204 ? null : body, { status: next.status ?? 200 });
 };
-
-const settle = () => new Promise((resolve) => { setTimeout(resolve, 20); });
 
 async function mount({ eventId = 'houston-2026', registrationMode } = {}) {
   [['event-id', eventId], ['registration-mode', registrationMode]]
@@ -59,7 +106,11 @@ async function mount({ eventId = 'houston-2026', registrationMode } = {}) {
 }
 
 function fill(form, values) {
-  for (const [name, value] of Object.entries(values)) { form.elements[name].value = value; }
+  for (const [name, value] of Object.entries(values)) {
+    const control = form.elements.namedItem(name);
+    control.value = value;
+    control.dispatchEvent(new Event('change', { bubbles: true }));
+  }
 }
 
 async function submit(form, values) {
@@ -68,13 +119,27 @@ async function submit(form, values) {
   await settle();
 }
 
-async function open(el) {
-  el.querySelector('.register-button').click();
+const REGISTRATION = {
+  firstName: 'Ana', lastName: 'Mora', email: 'ana@example.com', company: 'Acme', phone: '', country: 'CR',
+};
+
+// Fills the Register form, waits for consent, ticks the given boxes and submits.
+async function register(form, values = REGISTRATION, accepted = ['terms']) {
+  fill(form, values);
+  await settle();
+  accepted.forEach((id) => { form.elements.namedItem(id).checked = true; });
+  form.requestSubmit();
+  await settle();
+}
+
+async function click(el, text) {
+  [...el.querySelectorAll('button')].find((b) => b.textContent === text).click();
   await settle();
   return el.querySelector('dialog');
 }
 
-const REGISTRATION = { firstName: 'Ana', lastName: 'Mora', email: 'ana@example.com', country: 'CR' };
+const open = (el) => click(el, 'Register');
+const buttons = (el) => [...el.querySelectorAll('.register-controls button')].map((b) => b.textContent);
 const onChange = (e) => events.push(e.detail);
 
 before(() => {
@@ -113,21 +178,36 @@ afterEach(() => {
   expect(storageWrites, 'no web storage writes').to.equal(0);
 });
 
+function silenceConsole() {
+  const logged = [];
+  const original = { error: console.error, warn: console.warn, log: console.log };
+  console.error = (...a) => logged.push(a);
+  console.warn = console.error;
+  console.log = console.error;
+  return { logged, restore: () => Object.assign(console, original) };
+}
+
 describe('register: session restore', () => {
   it('fetches the session same-origin on load and shows Register', async () => {
     mockFetch({ 'GET /api/session': { body: ANON } });
     const el = await mount();
     expect(calls[0].key).to.equal('GET /api/session');
     expect(calls[0].opts.mode).to.equal('same-origin');
-    expect(el.querySelector('.register-button').textContent).to.equal('Register');
+    expect(buttons(el)).to.deep.equal(['Register']);
   });
 
-  it('shows the user and a Logout button when authenticated', async () => {
+  it('shows the user and a Logout button when authenticated and registered', async () => {
     mockFetch({ 'GET /api/session': { body: ANA } });
     const el = await mount();
     expect(el.querySelector('.register-user').textContent).to.equal('Logged in as Ana');
-    const buttons = [...el.querySelectorAll('.register-controls button')].map((b) => b.textContent);
-    expect(buttons).to.deep.equal(['Logout']);
+    expect(buttons(el)).to.deep.equal(['Logout']);
+  });
+
+  it('adds Complete registration when authenticated but not registered for this event', async () => {
+    mockFetch({ 'GET /api/session': { body: SSO_NEW } });
+    const el = await mount();
+    expect(el.querySelector('.register-user').textContent).to.equal('Logged in as Ana');
+    expect(buttons(el)).to.deep.equal(['Complete registration', 'Logout']);
   });
 
   [
@@ -136,23 +216,19 @@ describe('register: session restore', () => {
     ['non-JSON', { body: '<html>oops</html>' }],
   ].forEach(([label, response]) => {
     it(`degrades to an unavailable message on ${label}`, async () => {
-      const logged = [];
-      const { error, warn, log } = console;
-      console.error = (...a) => logged.push(a);
-      console.warn = console.error;
-      console.log = console.error;
+      const { logged, restore } = silenceConsole();
       try {
         mockFetch({ 'GET /api/session': response });
         const el = await mount();
-        expect(el.querySelector('.register-button').textContent).to.equal('Register');
+        expect(buttons(el)).to.deep.equal(['Register']);
         const dialog = await open(el);
         expect(dialog.open).to.be.true;
         expect(dialog.querySelector('.register-unavailable').textContent)
           .to.equal('Registration is unavailable right now.');
         expect(dialog.querySelector('.register-content').hidden).to.be.true;
-        expect(calls.map((c) => c.key)).to.deep.equal(['GET /api/session', 'GET /api/session', CONFIG]);
+        expect(calls.map((c) => c.key).slice(0, 3)).to.deep.equal(['GET /api/session', 'GET /api/session', CONFIG]);
       } finally {
-        Object.assign(console, { error, warn, log });
+        restore();
       }
       expect(logged).to.deep.equal([]);
     });
@@ -172,7 +248,6 @@ describe('register: dialog', () => {
       expect(control.labels.length, control.name).to.equal(1);
       expect(document.getElementById(control.getAttribute('aria-describedby')), control.name).to.exist;
     }
-    expect([...dialog.querySelector('select').options].map((o) => o.value)).to.deep.equal(['', 'DE', 'US', 'CR']);
   });
 
   it('switches tabs with the arrow keys', async () => {
@@ -207,21 +282,280 @@ describe('register: dialog', () => {
   });
 });
 
+describe('register: fields from the backend', () => {
+  it('requests the field set encoded and renders each type with its label and required flag', async () => {
+    const key = `GET /api/fields?fieldSet=${encodeURIComponent('a b&c=1')}`;
+    mockFetch({
+      'GET /api/session': { body: ANON },
+      [CONFIG]: { body: { modes: ['guest'], fieldSet: 'a b&c=1' } },
+      [key]: { body: { fields: FIELD_DEFS } },
+    });
+    const dialog = await open(await mount());
+    expect(calls.find((c) => c.key === key).opts.mode).to.equal('same-origin');
+    const form = dialog.querySelector('.register-form-register');
+    const rendered = FIELD_DEFS.map(({ name }) => {
+      const control = form.elements.namedItem(name);
+      return [name, control.tagName, control.type, control.required, control.labels[0].textContent];
+    });
+    expect(rendered).to.deep.equal([
+      ['firstName', 'INPUT', 'text', true, 'First name'],
+      ['lastName', 'INPUT', 'text', true, 'Last name'],
+      ['email', 'INPUT', 'email', true, 'Email'],
+      ['company', 'INPUT', 'text', false, 'Company'],
+      ['phone', 'INPUT', 'tel', false, 'Phone'],
+      ['country', 'SELECT', 'select-one', true, 'Country'],
+    ]);
+    const { options } = form.elements.namedItem('country');
+    expect([...options].map((o) => [o.value, o.textContent])).to.deep.equal([
+      ['', 'Select an option'], ['DE', 'Germany'], ['US', 'United States'], ['CR', 'Costa Rica'],
+    ]);
+    const ids = [...form.querySelectorAll('input, select')].map((c) => c.id);
+    expect(new Set(ids).size).to.equal(ids.length);
+  });
+
+  it('offers no Register form when the fields request fails, and retries on the next open', async () => {
+    const { logged, restore } = silenceConsole();
+    try {
+      mockFetch({ 'GET /api/session': { body: ANON }, [FIELDS]: [{ status: 500 }, { body: { fields: FIELD_DEFS } }] });
+      const el = await mount();
+      const dialog = await open(el);
+      expect(dialog.querySelectorAll('form')).to.have.length(1);
+      expect(dialog.querySelector('.register-form-login')).to.exist;
+      expect(dialog.querySelector('[role="tablist"]')).to.be.null;
+      dialog.close();
+      await open(el);
+      expect(dialog.querySelector('.register-form-register')).to.exist;
+    } finally {
+      restore();
+    }
+    expect(logged).to.deep.equal([]);
+  });
+
+  it('shows unavailable when only guest is allowed and the fields request fails', async () => {
+    mockFetch({ 'GET /api/session': { body: ANON }, [FIELDS]: { body: { nope: true } } });
+    const dialog = await open(await mount({ registrationMode: 'guest' }));
+    expect(dialog.querySelector('.register-unavailable').textContent).to.equal('Registration is unavailable right now.');
+    expect(dialog.querySelector('form')).to.be.null;
+  });
+
+  it('prefills editable fields from session.profile[prefill]', async () => {
+    mockFetch({ 'GET /api/session': { body: { ...SSO_NEW, readOnly: [] } } });
+    const el = await mount();
+    const dialog = await click(el, 'Complete registration');
+    const form = dialog.querySelector('form');
+    const firstName = form.elements.namedItem('firstName');
+    expect(firstName.value).to.equal('Ana');
+    expect(firstName.readOnly).to.be.false;
+    expect(form.elements.namedItem('lastName').value, 'no prefill key, not read-only').to.equal('');
+  });
+
+  it('fills read-only fields from the profile, locks them and leaves them out of the POST', async () => {
+    mockFetch({
+      'GET /api/session': [{ body: SSO_NEW }, { body: { ...SSO_NEW, registeredEvents: ['houston-2026'] } }],
+      'POST /api/register': { status: 201 },
+    });
+    const el = await mount();
+    const dialog = await click(el, 'Complete registration');
+    const form = dialog.querySelector('form');
+    const email = form.elements.namedItem('email');
+    const country = form.elements.namedItem('country');
+    expect([email.value, email.readOnly]).to.deep.equal(['ana@example.com', true]);
+    expect([country.value, country.disabled]).to.deep.equal(['CR', true]);
+    expect(calls.some((c) => c.key === CONSENT('CR')), 'consent for the prefilled country').to.be.true;
+
+    await register(form, { lastName: 'Mora', company: 'Acme' });
+    const post = calls.find((c) => c.key === 'POST /api/register');
+    expect(post.opts.headers['x-csrf-token']).to.equal('t4');
+    expect(post.body).to.deep.equal({
+      eventId: 'houston-2026',
+      fields: { firstName: 'Ana', lastName: 'Mora', company: 'Acme', phone: '' },
+      consent: { version: 'CR-v1', country: 'CR', accepted: ['terms'] },
+    });
+  });
+});
+
+describe('register: complete registration', () => {
+  it('opens only the prefilled Register form, then thanks the user and updates the session', async () => {
+    mockFetch({
+      'GET /api/session': [{ body: SSO_NEW }, { body: { ...SSO_NEW, registeredEvents: ['houston-2026'] } }],
+      'POST /api/register': { status: 201 },
+    });
+    const el = await mount({ registrationMode: 'sso' });
+    const dialog = await click(el, 'Complete registration');
+    expect(document.getElementById(dialog.getAttribute('aria-labelledby')).textContent).to.equal('Complete registration');
+    expect([...dialog.querySelectorAll('form')].map((f) => f.className)).to.deep.equal(['register-form-register']);
+    expect(dialog.querySelector('[role="tablist"], .register-sso')).to.be.null;
+
+    await register(dialog.querySelector('form'), { lastName: 'Mora', company: 'Acme' });
+    expect(dialog.open).to.be.true;
+    const thanks = dialog.querySelector('.register-thanks');
+    expect(thanks.textContent).to.equal('Thank you, you are registered');
+    expect(document.activeElement).to.equal(thanks);
+    expect(buttons(el)).to.deep.equal(['Logout']);
+    expect(events).to.deep.equal([{ authenticated: true, firstName: 'Ana' }]);
+
+    await click(dialog, 'Close');
+    expect(dialog.open).to.be.false;
+    expect(document.activeElement.textContent, 'focus returns to the controls').to.equal('Logout');
+  });
+});
+
+describe('register: consent', () => {
+  beforeEach(() => mockFetch({ 'GET /api/session': { body: ANON } }));
+
+  it('loads consent for the chosen country and renders text and labelled checkboxes', async () => {
+    const dialog = await open(await mount());
+    const form = dialog.querySelector('form');
+    const consentBox = form.querySelector('.register-consent');
+    expect(consentBox.hidden).to.be.true;
+    fill(form, { country: 'CR' });
+    await settle();
+    expect(calls.find((c) => c.key === CONSENT('CR')).opts.mode).to.equal('same-origin');
+    expect(consentBox.hidden).to.be.false;
+    expect(consentBox.querySelector('legend').textContent).to.equal('Consent');
+    expect(consentBox.querySelector('p').textContent).to.equal('Terms for CR.');
+    const boxes = [...consentBox.querySelectorAll('input')].map((b) => [b.type, b.name, b.required, b.labels[0].textContent]);
+    expect(boxes).to.deep.equal([
+      ['checkbox', 'terms', true, 'I accept the terms'],
+      ['checkbox', 'news', false, 'Send me news'],
+    ]);
+    expect(form.elements.namedItem('company').required, 'requiredFields').to.be.true;
+
+    fill(form, { country: 'DE' });
+    await settle();
+    expect(consentBox.querySelector('p').textContent).to.equal('Terms for DE.');
+    expect(form.elements.namedItem('company').required, 'back to the field default').to.be.false;
+
+    fill(form, { country: '' });
+    await settle();
+    expect(consentBox.hidden).to.be.true;
+  });
+
+  it('encodes the country code', async () => {
+    mockFetch({
+      'GET /api/session': { body: ANON },
+      [FIELDS]: { body: { fields: [{ name: 'country', type: 'text', label: 'Country', required: true }] } },
+    });
+    const dialog = await open(await mount());
+    fill(dialog.querySelector('form'), { country: 'C R&x' });
+    await settle();
+    expect(calls.some((c) => c.key === `GET /api/consent?country=${encodeURIComponent('C R&x')}`)).to.be.true;
+  });
+
+  it('ignores a slow consent response for a country that is no longer selected', async () => {
+    mockFetch({ 'GET /api/session': { body: ANON }, [CONSENT('CR')]: { ...consentFor('CR'), delay: 60 } });
+    const dialog = await open(await mount());
+    const form = dialog.querySelector('form');
+    fill(form, { country: 'CR' });
+    fill(form, { country: 'DE' });
+    await settle(120);
+    expect(form.querySelector('.register-consent p').textContent).to.equal('Terms for DE.');
+  });
+
+  it('sends version, country and the accepted checkbox ids next to eventId and fields', async () => {
+    mockFetch({ 'GET /api/session': [{ body: ANON }, { body: ANON }], 'POST /api/register': { status: 201 } });
+    const dialog = await open(await mount());
+    await register(dialog.querySelector('form'));
+    expect(calls.find((c) => c.key === 'POST /api/register').body).to.deep.equal({
+      eventId: 'houston-2026',
+      fields: REGISTRATION,
+      consent: { version: 'CR-v1', country: 'CR', accepted: ['terms'] },
+    });
+  });
+
+  it('does not submit before consent has loaded', async () => {
+    mockFetch({ 'GET /api/session': { body: ANON }, [CONSENT('CR')]: { ...consentFor('CR'), delay: 200 } });
+    const dialog = await open(await mount());
+    const form = dialog.querySelector('form');
+    fill(form, { ...REGISTRATION });
+    form.requestSubmit();
+    await settle();
+    expect(calls.some((c) => c.key === 'POST /api/register')).to.be.false;
+    expect(form.querySelector('.register-status').textContent)
+      .to.equal('Please wait for the consent terms to load, then try again.');
+  });
+
+  it('says so when consent cannot be loaded', async () => {
+    const { logged, restore } = silenceConsole();
+    try {
+      mockFetch({ 'GET /api/session': { body: ANON }, [CONSENT('CR')]: { status: 503 } });
+      const dialog = await open(await mount());
+      const form = dialog.querySelector('form');
+      fill(form, { country: 'CR' });
+      await settle();
+      expect(form.querySelector('.register-status').textContent)
+        .to.equal('Consent terms are unavailable right now. Please try again.');
+      expect(form.querySelector('.register-consent').hidden).to.be.true;
+    } finally {
+      restore();
+    }
+    expect(logged).to.deep.equal([]);
+  });
+
+  it('shows a 422 for a checkbox id next to that checkbox', async () => {
+    mockFetch({
+      'GET /api/session': { body: ANON },
+      'POST /api/register': { status: 422, body: { errors: { terms: 'You must accept the terms', email: 'Email is invalid' } } },
+    });
+    const dialog = await open(await mount());
+    const form = dialog.querySelector('form');
+    await register(form);
+    const terms = form.elements.namedItem('terms');
+    expect(terms.getAttribute('aria-invalid')).to.equal('true');
+    expect(document.getElementById(terms.getAttribute('aria-describedby')).textContent).to.equal('You must accept the terms');
+    expect(form.elements.namedItem('email').getAttribute('aria-invalid')).to.equal('true');
+    expect(document.activeElement).to.equal(terms);
+  });
+
+  it('shows a general message and re-fetches consent on a consent 422', async () => {
+    mockFetch({
+      'GET /api/session': { body: ANON },
+      [CONSENT('CR')]: [consentFor('CR'), consentFor('CR', { version: 'CR-v2' })],
+      'POST /api/register': [
+        { status: 422, body: { errors: { consent: 'The terms have changed.' } } },
+        { status: 201 },
+      ],
+    });
+    const dialog = await open(await mount());
+    const form = dialog.querySelector('form');
+    await register(form);
+    expect(form.querySelector('.register-status').textContent).to.equal('The terms have changed.');
+    expect(calls.filter((c) => c.key === CONSENT('CR'))).to.have.length(2);
+
+    form.elements.namedItem('terms').checked = true;
+    form.requestSubmit();
+    await settle();
+    expect(calls.filter((c) => c.key === 'POST /api/register').at(-1).body.consent.version).to.equal('CR-v2');
+  });
+});
+
 describe('register: register tab', () => {
-  it('posts eventId and fields with the CSRF token, then refreshes the session', async () => {
+  it('posts with the CSRF token, refreshes the session and keeps the dialog open with thanks', async () => {
     mockFetch({ 'GET /api/session': [{ body: ANON }, { body: ANA }], 'POST /api/register': { status: 201 } });
     const el = await mount();
     const dialog = await open(el);
-    await submit(dialog.querySelector('form'), REGISTRATION);
+    await register(dialog.querySelector('form'));
 
     const post = calls.find((c) => c.key === 'POST /api/register');
     expect(post.opts.mode).to.equal('same-origin');
     expect(post.opts.headers['x-csrf-token']).to.equal('t1');
-    expect(post.body).to.deep.equal({ eventId: 'houston-2026', fields: REGISTRATION });
     expect(calls.at(-1).key).to.equal('GET /api/session');
-    expect(dialog.open).to.be.false;
+    expect(dialog.open).to.be.true;
+    expect(dialog.querySelector('.register-thanks').textContent).to.equal('Thank you, you are registered');
     expect(el.querySelector('.register-user').textContent).to.equal('Logged in as Ana');
     expect(events).to.deep.equal([{ authenticated: true, firstName: 'Ana' }]);
+  });
+
+  it('shows the form again, reset, the next time the dialog opens after thanks', async () => {
+    mockFetch({ 'GET /api/session': [{ body: ANON }, { body: { ...ANON, csrfToken: 't5' } }], 'POST /api/register': { status: 201 } });
+    const el = await mount();
+    const dialog = await open(el);
+    await register(dialog.querySelector('form'));
+    await click(dialog, 'Close');
+    await open(el);
+    const form = dialog.querySelector('form');
+    expect(form).to.exist;
+    expect(form.elements.namedItem('firstName').value).to.equal('');
   });
 
   it('shows 422 errors next to each field', async () => {
@@ -232,15 +566,15 @@ describe('register: register tab', () => {
     const el = await mount();
     const dialog = await open(el);
     const form = dialog.querySelector('form');
-    await submit(form, REGISTRATION);
+    await register(form);
 
     for (const [name, text] of [['email', 'Email is invalid'], ['country', 'Pick a country']]) {
-      const control = form.elements[name];
+      const control = form.elements.namedItem(name);
       expect(control.getAttribute('aria-invalid')).to.equal('true');
       expect(document.getElementById(control.getAttribute('aria-describedby')).textContent).to.equal(text);
     }
-    expect(form.elements.firstName.hasAttribute('aria-invalid')).to.be.false;
-    expect(document.activeElement).to.equal(form.elements.email);
+    expect(form.elements.namedItem('firstName').hasAttribute('aria-invalid')).to.be.false;
+    expect(document.activeElement).to.equal(form.elements.namedItem('email'));
     const status = form.querySelector('.register-status');
     expect(status.getAttribute('aria-live')).to.equal('polite');
     expect(status.textContent).to.equal('Please correct the highlighted fields.');
@@ -258,7 +592,7 @@ describe('register: register tab', () => {
       const el = await mount();
       const dialog = await open(el);
       const form = dialog.querySelector('form');
-      await submit(form, REGISTRATION);
+      await register(form);
       expect(form.querySelector('.register-status').textContent).to.equal(text);
       expect(form.querySelector('[aria-invalid]')).to.be.null;
       expect(calls.filter((c) => c.key === 'GET /api/session')).to.have.length(1);
@@ -300,6 +634,21 @@ describe('register: login tab', () => {
     expect(events).to.deep.equal([{ authenticated: true, firstName: 'Ana' }]);
   });
 
+  it('offers Complete registration after logging in when not registered for the event', async () => {
+    mockFetch({
+      'GET /api/session': [{ body: ANON }, { body: { ...ANA, registeredEvents: [] } }],
+      'POST /api/otp/request': { status: 204 },
+      'POST /api/otp/verify': { status: 200 },
+    });
+    const el = await mount();
+    const dialog = await open(el);
+    const form = dialog.querySelector('.register-form-login');
+    await submit(form, { email: 'ana@example.com' });
+    await submit(form, { code: '123456' });
+    expect(buttons(el)).to.deep.equal(['Complete registration', 'Logout']);
+    expect(document.activeElement.textContent).to.equal('Complete registration');
+  });
+
   it('shows a 422 error next to the code', async () => {
     mockFetch({
       'GET /api/session': { body: ANON },
@@ -336,25 +685,23 @@ describe('register: logout', () => {
       'POST /api/register': { status: 409 },
     });
     const el = await mount();
-    el.querySelector('.register-controls button').click();
-    await settle();
+    await click(el, 'Logout');
 
     const logout = calls.find((c) => c.key === 'POST /api/logout');
     expect(logout.opts.headers['x-csrf-token']).to.equal('t2');
     expect(calls.at(-1).key).to.equal('GET /api/session');
-    expect(el.querySelector('.register-button').textContent).to.equal('Register');
+    expect(buttons(el)).to.deep.equal(['Register']);
     expect(events).to.deep.equal([{ authenticated: false, firstName: undefined }]);
 
     const dialog = await open(el);
-    await submit(dialog.querySelector('form'), REGISTRATION);
+    await register(dialog.querySelector('form'));
     expect(calls.at(-1).opts.headers['x-csrf-token']).to.equal('t3');
   });
 
   it('keeps the logged-in state and shows a message when logout fails', async () => {
     mockFetch({ 'GET /api/session': { body: ANA }, 'POST /api/logout': { status: 401 } });
     const el = await mount();
-    el.querySelector('.register-controls button').click();
-    await settle();
+    await click(el, 'Logout');
     expect(el.querySelector('.register-user').textContent).to.equal('Logged in as Ana');
     expect(el.querySelector('.register-message').textContent)
       .to.equal('Your session or code is no longer valid. Please try again.');
@@ -409,7 +756,7 @@ describe('register: event config', () => {
   });
 
   it('shows unavailable when the requested mode is not in modes', async () => {
-    mockFetch({ 'GET /api/session': { body: ANON }, [CONFIG]: { body: { modes: ['guest', 'otp'] } } });
+    mockFetch({ 'GET /api/session': { body: ANON }, [CONFIG]: config(['guest', 'otp']) });
     const dialog = await open(await mount({ registrationMode: 'sso' }));
     expect(view(dialog)).to.deep.equal({ tabs: [], forms: [], sso: null, unavailable: 'Registration is unavailable right now.' });
     expect(dialog.querySelector('.register-content').hidden).to.be.true;
@@ -421,7 +768,7 @@ describe('register: event config', () => {
     [['sso', 'otp', 'magic'], { tabs: [], forms: [LOGIN], sso: ssoHref(), unavailable: '' }],
   ].forEach(([modes, expected]) => {
     it(`limits hybrid to modes ${modes.join(', ')}`, async () => {
-      mockFetch({ 'GET /api/session': { body: ANON }, [CONFIG]: { body: { modes } } });
+      mockFetch({ 'GET /api/session': { body: ANON }, [CONFIG]: config(modes) });
       const dialog = await open(await mount({ registrationMode: 'hybrid' }));
       expect(view(dialog)).to.deep.equal(expected);
     });
@@ -444,34 +791,37 @@ describe('register: event config', () => {
     ['a response without modes', { body: { registrationMode: 'hybrid' } }],
   ].forEach(([label, response]) => {
     it(`shows unavailable and no forms when event config fails with ${label}`, async () => {
-      const logged = [];
-      const { error, warn, log } = console;
-      console.error = (...a) => logged.push(a);
-      console.warn = console.error;
-      console.log = console.error;
+      const { logged, restore } = silenceConsole();
       try {
         mockFetch({ 'GET /api/session': { body: ANON }, [CONFIG]: [response, ALL_MODES] });
         const el = await mount();
         const dialog = await open(el);
         expect(view(dialog)).to.deep.equal({ tabs: [], forms: [], sso: null, unavailable: 'Registration is unavailable right now.' });
-        expect(el.querySelector('.register-button').textContent).to.equal('Register');
+        expect(buttons(el)).to.deep.equal(['Register']);
 
         dialog.close();
         await open(el);
         expect(view(dialog).forms, 'retries on the next open').to.deep.equal([REG, LOGIN]);
       } finally {
-        Object.assign(console, { error, warn, log });
+        restore();
       }
       expect(logged).to.deep.equal([]);
     });
   });
 
-  it('fetches the config once and reuses it', async () => {
+  it('shows unavailable for Complete registration when event config fails', async () => {
+    mockFetch({ 'GET /api/session': { body: SSO_NEW }, [CONFIG]: { status: 404 } });
+    const dialog = await click(await mount(), 'Complete registration');
+    expect(view(dialog)).to.deep.equal({ tabs: [], forms: [], sso: null, unavailable: 'Registration is unavailable right now.' });
+  });
+
+  it('fetches the config and fields once and reuses them', async () => {
     mockFetch({ 'GET /api/session': { body: ANON } });
     const el = await mount();
     const dialog = await open(el);
     dialog.close();
     await open(el);
     expect(calls.filter((c) => c.key === CONFIG)).to.have.length(1);
+    expect(calls.filter((c) => c.key === FIELDS)).to.have.length(1);
   });
 });
