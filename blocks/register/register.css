@@ -116,6 +116,12 @@
       color: var(--color-text);
     }
 
+    input:read-only:not([type="checkbox"]),
+    select:disabled {
+      background-color: var(--color-shaded);
+      color: var(--color-gray-600);
+    }
+
     [aria-invalid="true"] {
       border-color: light-dark(var(--color-red-700), var(--color-red-300));
     }
@@ -123,6 +129,53 @@
 
   .register-submit {
     justify-self: start;
+  }
+
+  .register-fields {
+    display: grid;
+    gap: var(--spacing-m);
+  }
+
+  .register-consent {
+    display: grid;
+    gap: var(--spacing-s);
+    margin: 0;
+    padding: var(--spacing-m);
+    border: 1px solid var(--color-gray-300);
+
+    &[hidden] {
+      display: none;
+    }
+
+    legend {
+      padding-inline: var(--spacing-xs);
+      font-weight: 600;
+    }
+
+    p {
+      margin: 0;
+    }
+  }
+
+  .register-checkbox {
+    grid-template-columns: auto 1fr;
+    align-items: start;
+    column-gap: var(--spacing-s);
+
+    input {
+      margin-block-start: 0.3em;
+      padding: 0;
+    }
+
+    .register-field-error {
+      grid-column: 2;
+    }
+  }
+
+  .register-thanks {
+    margin: 0;
+    font-size: var(--body-font-size-l);
+    font-weight: 600;
   }
 
   .register-content {
