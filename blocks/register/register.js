@@ -1,6 +1,7 @@
 import { getMetadata } from '../../scripts/ak.js';
 
 const COUNTRIES = [['DE', 'Germany'], ['US', 'United States'], ['CR', 'Costa Rica']];
+const MODES = ['guest', 'otp', 'sso'];
 
 const MESSAGES = {
   401: 'Your session or code is no longer valid. Please try again.',
@@ -37,6 +38,24 @@ async function getSession() {
   } catch {
     return null;
   }
+}
+
+async function getEventConfig() {
+  const eventId = encodeURIComponent(getMetadata('event-id') ?? '');
+  try {
+    const res = await fetch(`/api/event-config?eventId=${eventId}`, { mode: 'same-origin' });
+    if (!res.ok) { return null; }
+    const config = await res.json();
+    return Array.isArray(config?.modes) ? config : null;
+  } catch {
+    return null;
+  }
+}
+
+function allowedModes({ modes }) {
+  const mode = getMetadata('registration-mode')?.trim().toLowerCase();
+  if (MODES.includes(mode)) { return modes.includes(mode) ? [mode] : []; }
+  return MODES.filter((m) => modes.includes(m));
 }
 
 async function post(path, token, body) {
@@ -177,9 +196,24 @@ export default function init(el) {
   };
   resetLogin();
 
-  const panels = [['Register', tag('div', {}, registerForm)], ['Login', tag('div', {}, loginForm)]];
+  const forms = { guest: ['Register', registerForm], otp: ['Login', loginForm] };
+  const sso = tag('a', { class: 'register-sso', text: 'Continue with corporate login' });
   const unavailable = tag('p', { class: 'register-unavailable', 'aria-live': 'polite' });
-  const content = tag('div', { class: 'register-content' }, tabs(prefix, panels), ...panels.map(([, panel]) => panel));
+  const content = tag('div', { class: 'register-content' });
+  let allowed = null;
+
+  const compose = () => {
+    const panels = allowed.filter((mode) => forms[mode])
+      .map((mode) => [forms[mode][0], tag('div', {}, forms[mode][1])]);
+    const parts = panels.map(([, panel]) => panel);
+    if (panels.length > 1) { parts.unshift(tabs(prefix, panels)); }
+    if (allowed.includes('sso')) {
+      const { pathname, search } = window.location;
+      sso.setAttribute('href', `/api/login/sso?returnTo=${encodeURIComponent(pathname + search)}`);
+      parts.push(sso);
+    }
+    content.replaceChildren(...parts);
+  };
   const close = tag('button', { type: 'button', class: 'register-close', 'aria-label': 'Close', text: '×' });
   const dialog = tag(
     'dialog',
@@ -207,8 +241,9 @@ export default function init(el) {
   };
 
   const showAvailability = () => {
-    content.hidden = !session;
-    unavailable.textContent = session ? '' : MESSAGES.unavailable;
+    const available = Boolean(session && allowed?.length);
+    content.hidden = !available;
+    unavailable.textContent = available ? '' : MESSAGES.unavailable;
   };
 
   const loggedIn = async (target) => {
@@ -269,9 +304,17 @@ export default function init(el) {
   });
 
   openButton.addEventListener('click', async () => {
-    content.hidden = !session;
+    content.hidden = !(session && allowed);
     dialog.showModal();
-    session ??= await getSession();
+    const [restored, config] = await Promise.all([
+      session ?? getSession(),
+      allowed ? null : getEventConfig(),
+    ]);
+    session = restored;
+    if (!allowed && config) {
+      allowed = allowedModes(config);
+      compose();
+    }
     showAvailability();
   });
 

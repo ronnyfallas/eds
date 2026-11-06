@@ -19,9 +19,13 @@ const ANA = {
   registeredEvents: ['houston-2026'],
 };
 
-// Each route is a queue of responses; the last one repeats.
+const CONFIG = 'GET /api/event-config?eventId=houston-2026';
+const ALL_MODES = { body: { modes: ['guest', 'otp', 'sso'], registrationMode: 'hybrid' } };
+
+// Each route is a queue of responses; the last one repeats. Event config defaults to all modes.
 function mockFetch(table) {
-  routes = Object.fromEntries(Object.entries(table).map(([key, value]) => [key, [].concat(value)]));
+  routes = Object.fromEntries(Object.entries({ [CONFIG]: ALL_MODES, ...table })
+    .map(([key, value]) => [key, [].concat(value)]));
 }
 
 window.fetch = async (url, opts = {}) => {
@@ -36,15 +40,19 @@ window.fetch = async (url, opts = {}) => {
 
 const settle = () => new Promise((resolve) => { setTimeout(resolve, 20); });
 
-async function mount() {
-  const meta = document.createElement('meta');
-  meta.name = 'event-id';
-  meta.content = 'houston-2026';
-  document.head.append(meta);
+async function mount({ eventId = 'houston-2026', registrationMode } = {}) {
+  [['event-id', eventId], ['registration-mode', registrationMode]]
+    .filter(([, content]) => content !== undefined)
+    .forEach(([name, content]) => {
+      const meta = document.createElement('meta');
+      Object.assign(meta, { name, content });
+      document.head.append(meta);
+      mounted.push(meta);
+    });
   const el = document.createElement('div');
   el.className = 'register';
   document.body.append(el);
-  mounted.push(el, meta);
+  mounted.push(el);
   init(el);
   await settle();
   return el;
@@ -142,7 +150,7 @@ describe('register: session restore', () => {
         expect(dialog.querySelector('.register-unavailable').textContent)
           .to.equal('Registration is unavailable right now.');
         expect(dialog.querySelector('.register-content').hidden).to.be.true;
-        expect(calls.map((c) => c.key)).to.deep.equal(['GET /api/session', 'GET /api/session']);
+        expect(calls.map((c) => c.key)).to.deep.equal(['GET /api/session', 'GET /api/session', CONFIG]);
       } finally {
         Object.assign(console, { error, warn, log });
       }
@@ -351,5 +359,119 @@ describe('register: logout', () => {
     expect(el.querySelector('.register-message').textContent)
       .to.equal('Your session or code is no longer valid. Please try again.');
     expect(events).to.deep.equal([]);
+  });
+});
+
+describe('register: event config', () => {
+  const view = (dialog) => ({
+    tabs: [...dialog.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent),
+    forms: [...dialog.querySelectorAll('form')].map((form) => form.className),
+    sso: dialog.querySelector('.register-sso')?.getAttribute('href') ?? null,
+    unavailable: dialog.querySelector('.register-unavailable').textContent,
+  });
+  const ssoHref = () => `/api/login/sso?returnTo=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+  const REG = 'register-form-register';
+  const LOGIN = 'register-form-login';
+
+  it('requests the config same-origin with the encoded event id before showing forms', async () => {
+    const eventId = 'hou ston/26&x=1';
+    const key = `GET /api/event-config?eventId=${encodeURIComponent(eventId)}`;
+    mockFetch({ 'GET /api/session': { body: ANON }, [key]: ALL_MODES });
+    const el = await mount({ eventId });
+    expect(el.querySelector('form'), 'no form before the config arrives').to.be.null;
+    expect(calls.map((c) => c.key)).to.deep.equal(['GET /api/session']);
+    await open(el);
+    const call = calls.find((c) => c.key === key);
+    expect(call.opts.mode).to.equal('same-origin');
+    expect(el.querySelectorAll('form')).to.have.length(2);
+  });
+
+  [undefined, 'hybrid', 'banana'].forEach((registrationMode) => {
+    it(`shows every mode in modes when registration-mode is ${registrationMode ?? 'missing'}`, async () => {
+      mockFetch({ 'GET /api/session': { body: ANON } });
+      const dialog = await open(await mount({ registrationMode }));
+      expect(view(dialog)).to.deep.equal({ tabs: ['Register', 'Login'], forms: [REG, LOGIN], sso: ssoHref(), unavailable: '' });
+    });
+  });
+
+  [
+    ['guest', { tabs: [], forms: [REG], sso: null, unavailable: '' }],
+    ['otp', { tabs: [], forms: [LOGIN], sso: null, unavailable: '' }],
+    ['sso', { tabs: [], forms: [], sso: ssoHref(), unavailable: '' }],
+    [' OTP ', { tabs: [], forms: [LOGIN], sso: null, unavailable: '' }],
+  ].forEach(([registrationMode, expected]) => {
+    it(`shows only ${registrationMode.trim()} without tabs when registration-mode is "${registrationMode}"`, async () => {
+      mockFetch({ 'GET /api/session': { body: ANON } });
+      const dialog = await open(await mount({ registrationMode }));
+      expect(view(dialog)).to.deep.equal(expected);
+      expect(dialog.querySelector('[role="tablist"], [role="tabpanel"]')).to.be.null;
+    });
+  });
+
+  it('shows unavailable when the requested mode is not in modes', async () => {
+    mockFetch({ 'GET /api/session': { body: ANON }, [CONFIG]: { body: { modes: ['guest', 'otp'] } } });
+    const dialog = await open(await mount({ registrationMode: 'sso' }));
+    expect(view(dialog)).to.deep.equal({ tabs: [], forms: [], sso: null, unavailable: 'Registration is unavailable right now.' });
+    expect(dialog.querySelector('.register-content').hidden).to.be.true;
+  });
+
+  [
+    [['guest', 'sso'], { tabs: [], forms: [REG], sso: ssoHref(), unavailable: '' }],
+    [['otp'], { tabs: [], forms: [LOGIN], sso: null, unavailable: '' }],
+    [['sso', 'otp', 'magic'], { tabs: [], forms: [LOGIN], sso: ssoHref(), unavailable: '' }],
+  ].forEach(([modes, expected]) => {
+    it(`limits hybrid to modes ${modes.join(', ')}`, async () => {
+      mockFetch({ 'GET /api/session': { body: ANON }, [CONFIG]: { body: { modes } } });
+      const dialog = await open(await mount({ registrationMode: 'hybrid' }));
+      expect(view(dialog)).to.deep.equal(expected);
+    });
+  });
+
+  it('makes SSO a plain top-level link, not a fetch', async () => {
+    mockFetch({ 'GET /api/session': { body: ANON } });
+    const dialog = await open(await mount({ registrationMode: 'sso' }));
+    const link = dialog.querySelector('.register-sso');
+    expect(link.tagName).to.equal('A');
+    expect(link.textContent).to.equal('Continue with corporate login');
+    expect(link.target).to.equal('');
+    expect(calls.some((c) => c.key.includes('/api/login/sso'))).to.be.false;
+  });
+
+  [
+    ['404', { status: 404, body: 'Not found' }],
+    ['a network error', 'network'],
+    ['non-JSON', { body: '<html>oops</html>' }],
+    ['a response without modes', { body: { registrationMode: 'hybrid' } }],
+  ].forEach(([label, response]) => {
+    it(`shows unavailable and no forms when event config fails with ${label}`, async () => {
+      const logged = [];
+      const { error, warn, log } = console;
+      console.error = (...a) => logged.push(a);
+      console.warn = console.error;
+      console.log = console.error;
+      try {
+        mockFetch({ 'GET /api/session': { body: ANON }, [CONFIG]: [response, ALL_MODES] });
+        const el = await mount();
+        const dialog = await open(el);
+        expect(view(dialog)).to.deep.equal({ tabs: [], forms: [], sso: null, unavailable: 'Registration is unavailable right now.' });
+        expect(el.querySelector('.register-button').textContent).to.equal('Register');
+
+        dialog.close();
+        await open(el);
+        expect(view(dialog).forms, 'retries on the next open').to.deep.equal([REG, LOGIN]);
+      } finally {
+        Object.assign(console, { error, warn, log });
+      }
+      expect(logged).to.deep.equal([]);
+    });
+  });
+
+  it('fetches the config once and reuses it', async () => {
+    mockFetch({ 'GET /api/session': { body: ANON } });
+    const el = await mount();
+    const dialog = await open(el);
+    dialog.close();
+    await open(el);
+    expect(calls.filter((c) => c.key === CONFIG)).to.have.length(1);
   });
 });
