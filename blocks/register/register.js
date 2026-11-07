@@ -217,6 +217,7 @@ export default function init(el) {
   resetLogin();
 
   const isReadOnly = (name) => Boolean(session?.readOnly?.includes(name));
+  const registered = () => Boolean(session?.registeredEvents?.includes(eventId));
 
   const applyRequired = (names) => {
     for (const def of defs ?? []) {
@@ -291,13 +292,14 @@ export default function init(el) {
     unavailable,
     content,
   );
-  // Focus returns to the controls, whose buttons may have been swapped while the dialog was open.
+  // If focus was lost (its opener was swapped while the dialog was open), move it to the controls.
   const closed = () => {
     if (done) {
       done = false;
       prefilledFor = undefined;
     }
-    if (!controls.contains(document.activeElement)) { controls.querySelector('button')?.focus(); }
+    const active = document.activeElement;
+    if (active === document.body || dialog.contains(active)) { controls.querySelector('button')?.focus(); }
   };
   const closeDialog = () => {
     dialog.close();
@@ -327,8 +329,7 @@ export default function init(el) {
       return;
     }
     user.textContent = ['Logged in', session.profile?.firstName].filter(Boolean).join(' as ');
-    const registered = session.registeredEvents?.includes(eventId);
-    controls.replaceChildren(user, ...(registered ? [] : [completeButton]), logoutButton);
+    controls.replaceChildren(user, ...(registered() ? [] : [completeButton]), logoutButton);
   };
 
   const changed = () => {
@@ -459,8 +460,18 @@ export default function init(el) {
 
   render();
   el.replaceChildren(controls, message, dialog);
-  getSession().then((restored) => {
+  const restoring = getSession().then((restored) => {
     session = restored;
     render();
+  });
+
+  document.addEventListener('login:required', async () => {
+    await restoring;
+    if (!el.isConnected || document.querySelector('dialog.register-dialog[open]')) { return; }
+    if (!session?.authenticated) {
+      openDialog(false);
+    } else if (!registered()) {
+      openDialog(true);
+    }
   });
 }

@@ -837,3 +837,91 @@ describe('register: event config', () => {
     expect(calls.filter((c) => c.key === FIELDS)).to.have.length(1);
   });
 });
+
+describe('register: login:required', () => {
+  const fire = async (target = document) => {
+    target.dispatchEvent(new CustomEvent('login:required', { bubbles: true }));
+    await settle();
+  };
+  const ready = (dialog) => until(() => dialog.querySelector('.register-content').children.length
+    || dialog.querySelector('.register-unavailable').textContent);
+  const titleOf = (dialog) => document.getElementById(dialog.getAttribute('aria-labelledby')).textContent;
+
+  it('opens the dialog like the Register button when not authenticated', async () => {
+    mockFetch({ 'GET /api/session': { body: ANON } });
+    const el = await mount();
+    const dialog = el.querySelector('dialog');
+    await fire();
+    await ready(dialog);
+    expect(dialog.matches(':modal')).to.be.true;
+    expect(titleOf(dialog)).to.equal('Register or log in');
+    expect([...dialog.querySelectorAll('[role="tab"]')].map((t) => t.textContent)).to.deep.equal(['Register', 'Login']);
+    expect(dialog.querySelector('.register-sso')).to.exist;
+  });
+
+  it('opens Complete registration when authenticated but not registered for this event', async () => {
+    mockFetch({ 'GET /api/session': { body: SSO_NEW } });
+    const el = await mount();
+    const dialog = el.querySelector('dialog');
+    await fire();
+    await ready(dialog);
+    expect(titleOf(dialog)).to.equal('Complete registration');
+    expect([...dialog.querySelectorAll('form')].map((f) => f.className)).to.deep.equal(['register-form-register']);
+    expect(dialog.querySelector('[role="tablist"], .register-sso')).to.be.null;
+    expect(dialog.querySelector('form').elements.namedItem('email').readOnly).to.be.true;
+  });
+
+  it('does nothing when the user is already registered', async () => {
+    mockFetch({ 'GET /api/session': { body: ANA } });
+    const el = await mount();
+    const before = calls.length;
+    await fire();
+    expect(el.querySelector('dialog').open).to.be.false;
+    expect(calls.length, 'no requests').to.equal(before);
+  });
+
+  it('does nothing when the dialog is already open', async () => {
+    mockFetch({ 'GET /api/session': { body: ANON } });
+    const el = await mount();
+    const dialog = await open(el);
+    dialog.querySelectorAll('[role="tab"]')[1].click();
+    const before = calls.length;
+    await fire();
+    expect(dialog.open).to.be.true;
+    expect(calls.length, 'no requests').to.equal(before);
+    expect(dialog.querySelectorAll('[role="tab"]')[1].getAttribute('aria-selected'), 'not rebuilt').to.equal('true');
+  });
+
+  it('waits for the session to load before choosing how to open', async () => {
+    mockFetch({ 'GET /api/session': { body: SSO_NEW, delay: 80 } });
+    const el = await mount();
+    const dialog = el.querySelector('dialog');
+    await fire();
+    await until(() => dialog.open);
+    await ready(dialog);
+    expect(titleOf(dialog)).to.equal('Complete registration');
+  });
+
+  it('opens only one dialog when the page has two register blocks', async () => {
+    mockFetch({ 'GET /api/session': { body: ANON } });
+    await mount();
+    await mount();
+    await fire();
+    expect(document.querySelectorAll('dialog.register-dialog[open]')).to.have.length(1);
+  });
+
+  it('returns focus to the element that asked for login when the dialog closes', async () => {
+    mockFetch({ 'GET /api/session': { body: ANON } });
+    const el = await mount();
+    const trigger = document.createElement('button');
+    trigger.textContent = 'Save to my agenda';
+    document.body.append(trigger);
+    mounted.push(trigger);
+    trigger.focus();
+    await fire(trigger);
+    await ready(el.querySelector('dialog'));
+    await sendKeys({ press: 'Escape' });
+    await settle();
+    expect(document.activeElement).to.equal(trigger);
+  });
+});
